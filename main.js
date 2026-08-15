@@ -6,7 +6,6 @@ require('dotenv').config({ quiet: true });
 const { createControlServer } = require('./services/control-server');
 const { startTranscriptWatcher } = require('./services/transcript-watcher');
 const { startTouchInjector } = require('./services/touch-injector');
-const { startPulseScheduler, startIdlePulse } = require('./services/pulse-scheduler');
 const { bumpActivity, getIdleMs } = require('./services/activity-tracker');
 const { createEmbeddedBrain } = require('./brain/embedded-ai');
 const { start: startMurmur } = require('./services/murmur-engine');
@@ -107,39 +106,28 @@ function startBodyServices() {
     touchPath: petTouchPath
   });
 
-  // Phase 3: push drive state to renderer for visualization
-  let lastTickMs = Date.now();
+  // Push the same drive state to both the panel and low-amplitude face layer.
   setInterval(() => {
     try {
-      const state = require('./services/drive-engine').tick();
-      const now = Date.now();
-      const idleSec = (now - lastTickMs) / 1000;
-
-      // Factual push: idle time → reflection (silence breeds thought)
-      if (idleSec >= 10) {
-        const de = require('./services/drive-engine');
-        de.push(state, 'reflection', Math.min(0.04, idleSec * 0.002));
-        de.save(state);
-      }
-      lastTickMs = now;
-
-      const brief = {};
-      for (const [k, d] of Object.entries(state.values)) {
-        brief[k] = { v: +d.v.toFixed(2), b: d.baseline };
-      }
-      win?.webContents?.send('external:control', { driveState: brief });
+      const de = require('./services/drive-engine');
+      const state = de.tick();
+      const { face, detailFace } = de.computeFace(state);
+      win?.webContents?.send('external:control', {
+        driveState: de.brief(state),
+        face,
+        detailFace,
+        source: 'drive'
+      });
     } catch {}
   }, 2000);
 
-  // Phase 5: MurMur — internal monologue, thought hints every ~20s when drives are elevated
-  startMurmur({ tickMs: 10000, murmurEvery: 2 });
-
+  // One autonomy scheduler: drive-aware MurMur replaces the separate idle pulse.
   if (enablePulse) {
-    if (process.env.PULSE_INTERVAL_MS && process.env.PULSE_IDLE_MS === undefined && !process.env.PULSE_IDLE_MS) {
-      startPulseScheduler();
-    } else {
-      startIdlePulse({ getIdleMs });
-    }
+    startMurmur({
+      tickMs: 10000,
+      checkEvery: 2,
+      getIdleMs
+    });
   }
 }
 

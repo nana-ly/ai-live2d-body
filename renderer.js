@@ -6,11 +6,11 @@
   const { IdleStateMachine } = window.PetIdle;
   const { Choreographer } = window.PetChoreographer;
   const { ParameterPipeline } = window.PetPipeline;
+  const { updateDrivePanel } = window.PetDrivePanel;
   const {
     expressionByEmotion,
     faceByEmotion,
-    detailFaceByEmotion,
-    workPropByTool
+    detailFaceByEmotion
   } = window.PetEmotionMap;
 
   const app = new Application({
@@ -54,12 +54,6 @@
   const contextMenu = document.getElementById('contextMenu');
   const chatForm = document.getElementById('chatForm');
   const drivePanel = document.getElementById('drivePanel');
-  const DRIVE_LABELS = {
-    attachment: 'attach', curiosity: 'curio', reflection: 'refl',
-    duty: 'duty', social: 'social', fatigue: 'fatigue',
-    libido: 'libido', stress: 'stress'
-  };
-  const DRIVE_ORDER = ['attachment','curiosity','reflection','duty','social','fatigue','libido','stress'];
   // Clean start: don't carry over props (dog paw/glasses/hair) from previous sessions
   localStorage.removeItem('pet.persistentParams');
   const persistentParams = {};
@@ -538,38 +532,10 @@
     setDetailFaceTarget
   };
 
-  // Drive panel builder — called when driveState payload arrives
-  const DRIVE_COLORS = {
-    attachment: '#f4a0b0',  // pink — warmth
-    curiosity:   '#a0d2f4',  // sky blue — wonder
-    reflection:  '#c4b0e8',  // lavender — thought
-    duty:        '#f4c070',  // amber — responsibility
-    social:      '#7ec8a0',  // mint — connection
-    fatigue:     '#b0a0c8',  // violet — tired
-    libido:      '#f0a0a0',  // rose — instinct
-    stress:      '#f08080',  // coral red — tension
-  };
-  const updateDrivePanel = (state) => {
-    if (!drivePanel) return;
-    let html = '<div class="dp-title">drives</div>';
-    for (const key of DRIVE_ORDER) {
-      const d = state[key];
-      if (!d) continue;
-      const pct = Math.round(d.v * 100);
-      const color = DRIVE_COLORS[key] || 'rgba(246,247,251,0.35)';
-      html += `<div class="drive-row">
-        <span class="drive-label">${DRIVE_LABELS[key] || key}</span>
-        <span class="drive-bar"><span class="drive-bar-fill" style="width:${pct}%;background:${color}"></span></span>
-        <span class="drive-val">${d.v.toFixed(2)}</span>
-      </div>`;
-    }
-    drivePanel.innerHTML = html;
-  };
-
   window.petExternal.onControl((payload) => {
     if (payload.driveState) {
-      updateDrivePanel(payload.driveState);
-      return; // drive-only push, don't process as speech/emotion/work
+      updateDrivePanel(drivePanel, payload.driveState);
+      // Continue: the same payload may contain the drive micro-expression.
     }
     if (payload.bubble?.text) {
       // pet_speak 后 10 秒内，transcript watcher 的气泡不覆盖
@@ -618,6 +584,7 @@
     // mergeFace will blend them and apply with correct parameter IDs
     if (payload.face) {
       if (payload.source === 'drive') {
+        clearObject(driveFace);
         Object.assign(driveFace, payload.face);
       } else {
         Object.assign(emotionFace, payload.face);
@@ -625,6 +592,7 @@
     }
     if (payload.detailFace) {
       if (payload.source === 'drive') {
+        clearObject(driveDetail);
         Object.assign(driveDetail, payload.detailFace);
       } else {
         Object.assign(emotionDetail, payload.detailFace);

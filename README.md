@@ -10,7 +10,7 @@ its senses.
 - **Body:** Electron + PixiJS + `pixi-live2d-display`.
 - **Active expression:** MCP tools for speech, actions, and durable memory.
 - **Passive reflection:** hooks, transcript watching, touch injection, drives,
-  pulse, and MurMur hints.
+  and one drive-aware MurMur/pulse scheduler.
 - **Legacy fallback:** the embedded OpenAI-compatible client is disabled in the
   default body-only mode.
 
@@ -70,8 +70,7 @@ fact-version tracing, plans, letters, identity, and the MCP stdio/tool bridge.
 
 ## Current roadmap
 
-1. Complete the durable-memory loop and seed only confirmed memories.
-2. Redefine drive semantics and correct fatigue/reflection/duty dynamics.
-3. Deliver MurMur hints to Claude Code with inhibition and cooldown.
-4. Split the large renderer and main-process entrypoints into focused modules.
-5. Add a runtime doctor and improve one-command startup.
+1. Seed only confirmed durable memories and verify recall across sessions.
+2. Visually validate drive micro-expressions and MurMur behavior in Live2D.
+3. Continue splitting the renderer and main-process entrypoints.
+4. Add a runtime doctor and improve one-command startup.

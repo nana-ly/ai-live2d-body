@@ -9,11 +9,18 @@ function loadPetMcp(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'leo-mcp-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   process.env.PET_MEMORY_PATH = path.join(directory, 'memory-index.json');
+  process.env.PET_DRIVE_PATH = path.join(directory, 'drive-state.json');
+  process.env.PET_DRIVE_EVENT_PATH = path.join(directory, 'drive-events.jsonl');
+  const driveModulePath = require.resolve('../services/drive-engine');
   const modulePath = require.resolve('../mcp/pet-server');
+  delete require.cache[driveModulePath];
   delete require.cache[modulePath];
   const server = require(modulePath);
   t.after(() => {
     delete process.env.PET_MEMORY_PATH;
+    delete process.env.PET_DRIVE_PATH;
+    delete process.env.PET_DRIVE_EVENT_PATH;
+    delete require.cache[driveModulePath];
     delete require.cache[modulePath];
   });
   return server;
@@ -25,7 +32,7 @@ test('lists the body and durable memory MCP tools', (t) => {
   for (const name of [
     'pet_speak', 'pet_act', 'pet_signature', 'memory_breath',
     'memory_search', 'memory_hold', 'memory_recall', 'memory_trace',
-    'memory_plan', 'memory_letter', 'memory_identity'
+    'memory_plan', 'memory_letter', 'memory_identity', 'drive_read', 'drive_reflect'
   ]) {
     assert.equal(names.has(name), true, `missing ${name}`);
   }
@@ -46,6 +53,21 @@ test('memory tools work through the same MCP dispatcher', async (t) => {
     patch: { resolved: true, reason: 'Verified by Lily.' }
   });
   assert.equal(corrected.resolved, true);
+});
+
+test('drive reflection works through MCP and requires a reason', async (t) => {
+  const { handleToolCall } = loadPetMcp(t);
+  assert.throws(
+    () => handleToolCall('drive_reflect', { social: 0.05 }),
+    /reason is required/
+  );
+  const result = await handleToolCall('drive_reflect', {
+    social: 0.05,
+    reflection: 0.03,
+    reason: 'I genuinely want to keep talking and think through the design.'
+  });
+  assert.equal(result.applied.social.delta, 0.05);
+  assert.equal(result.state.social.v, 0.35);
 });
 
 test('serves a clean MCP initialize and tools/list exchange over stdio', async (t) => {

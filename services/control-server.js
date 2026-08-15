@@ -73,18 +73,14 @@ function createControlServer(getWindow, options = {}) {
     }
 
     if (endpoint === '/work' || endpoint === '/heartbeat') {
-      // Factual push: working → duty
-      if (payload.active !== false && payload.status !== 'idle') {
-        try {
-          const de = require('./drive-engine');
-          const s = de.tick();
-          de.push(s, 'duty', 0.05);
-          de.save(s);
-        } catch {}
-      }
+      const active = payload.active !== false && payload.status !== 'idle';
+      try {
+        const de = require('./drive-engine');
+        de.onWork(payload.tool || payload.toolName || payload.name || 'default', active);
+      } catch {}
       return sendToRenderer({
         work: {
-          active: payload.active !== false && payload.status !== 'idle',
+          active,
           tool: String(payload.tool || payload.toolName || payload.name || 'default'),
           status: payload.status || (payload.active === false ? 'idle' : 'working')
         }

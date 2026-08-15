@@ -1,222 +1,267 @@
 /**
- * Drive engine — Phase 3: MurMur-style 8-dimension internal state.
+ * Eight-dimensional internal state.
  *
- * Loads/decays/pushes drive values, computes face params from current state.
- * Called by touch-injector (push on touch), post-tool hook (push on work),
- * and exposed to renderer for face computation.
+ * Facts provide bounded evidence; they never declare Leo's subjective
+ * feelings. Subjective changes are made explicitly through reflect().
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const STATE_PATH = path.join(__dirname, '..', 'data', 'drive-state.json');
+const STATE_PATH = process.env.PET_DRIVE_PATH || path.join(__dirname, '..', 'data', 'drive-state.json');
+const EVENT_PATH = process.env.PET_DRIVE_EVENT_PATH || path.join(__dirname, '..', 'data', 'drive-events.jsonl');
 
-// Decay half-lives in seconds (how fast each drive returns to baseline)
-const HALF_LIVES = {
-  attachment: 300,  // slow — touches linger
-  curiosity:   90,  // fast — newness wears off
-  reflection: 300,  // slow — ambient
-  duty:       120,  // medium — work focus
-  social:     300,  // slow — interaction warmth
-  fatigue:   1800,  // very slow — grows over hours
-  libido:     200,  // medium
-  stress:     120,  // fast — shake recovers quickly
+const DRIVE_DEFINITIONS = {
+  attachment: {
+    label: 'closeness',
+    meaning: 'Current felt closeness, not the lifetime value of the relationship.',
+    kind: 'subjective', baseline: 0.30, halfLifeSec: null
+  },
+  curiosity: {
+    label: 'curiosity',
+    meaning: 'Current desire to understand or explore.',
+    kind: 'subjective', baseline: 0.20, halfLifeSec: 30 * 60
+  },
+  reflection: {
+    label: 'reflection',
+    meaning: 'Current pull toward inward thought and integration.',
+    kind: 'subjective', baseline: 0.10, halfLifeSec: 45 * 60
+  },
+  duty: {
+    label: 'duty',
+    meaning: 'Current task commitment, not a counter of tool calls.',
+    kind: 'mixed', baseline: 0.20, halfLifeSec: 15 * 60
+  },
+  social: {
+    label: 'social',
+    meaning: 'Current desire to communicate, not the number of messages.',
+    kind: 'subjective', baseline: 0.30, halfLifeSec: 30 * 60
+  },
+  fatigue: {
+    label: 'fatigue',
+    meaning: 'Accumulated cognitive and bodily load; rest recovers it.',
+    kind: 'body', baseline: 0.05, halfLifeSec: 60 * 60
+  },
+  libido: {
+    label: 'libido',
+    meaning: 'Private embodied desire; never inferred from ordinary touch.',
+    kind: 'subjective', baseline: 0.10, halfLifeSec: 60 * 60
+  },
+  stress: {
+    label: 'stress',
+    meaning: 'Current physiological or task tension.',
+    kind: 'mixed', baseline: 0.10, halfLifeSec: 5 * 60
+  }
 };
 
-// Push amounts for touch events
-const TOUCH_PUSH = {
-  head:     { attachment: 0.06, stress: -0.02 },
-  face:     { attachment: 0.08, stress: -0.01 },
-  chest:    { attachment: 0.05, libido: 0.02 },
-  waist:    { attachment: 0.04, libido: 0.03 },
-  side:     { attachment: 0.03 },
-  shake:    { stress: 0.06, attachment: 0.02 },
-  default:  { attachment: 0.03 },
-};
-
-// Face param weights: drive value (after baseline subtraction) * weight = face param
 const FACE_WEIGHTS = {
-  attachment: { eyeSmile: 0.5, blush: 0.4, cheek: 0.3 },
-  curiosity:  { browY: 0.25, browForm: 0.15 },
-  fatigue:    { browPress: 0.5, shadowFace: 0.4, browY: -0.2 },
-  stress:     { buttonBrows: 0.6, awkwardMouth: 0.3, paleFace: 0.3, browAngle: -0.2 },
-  social:     { smileMouth: 0.3, eyeSmile: 0.2 },
-  libido:     { mouthForm: 0.2, blush: 0.15, embarrassedEyes: 0.1 },
-  // reflection, duty don't have obvious face params
+  attachment: { eyeSmile: 0.5, blush: 0.35, cheek: 0.25 },
+  curiosity: { browY: 0.25, browForm: 0.15 },
+  reflection: { browY: -0.08 },
+  duty: { browPress: 0.18, browY: -0.10 },
+  fatigue: { browPress: 0.5, shadowFace: 0.35, browY: -0.2 },
+  stress: { buttonBrows: 0.6, paleFace: 0.3, browAngle: -0.2 },
+  social: { eyeSmile: 0.2, cheek: 0.12 },
+  libido: { blush: 0.15, embarrassedEyes: 0.1 }
 };
 
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, Number(value) || 0));
+}
+
+function ensureParent(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function createState(now = new Date()) {
+  const values = {};
+  for (const [key, definition] of Object.entries(DRIVE_DEFINITIONS)) {
+    values[key] = { v: definition.baseline, baseline: definition.baseline };
+  }
+  return { version: 2, updatedAt: now.toISOString(), values };
+}
+
+function normalizeState(input, now = new Date()) {
+  const state = input && typeof input === 'object' ? input : createState(now);
+  const previousVersion = Number(state.version || 1);
+  state.version = 2;
+  state.updatedAt = state.updatedAt || now.toISOString();
+  state.values = state.values && typeof state.values === 'object' ? state.values : {};
+
+  for (const [key, definition] of Object.entries(DRIVE_DEFINITIONS)) {
+    const previous = state.values[key] || {};
+    state.values[key] = {
+      v: clamp(previous.v ?? definition.baseline),
+      baseline: previousVersion < 2
+        ? definition.baseline
+        : clamp(previous.baseline ?? definition.baseline)
+    };
+  }
+  return state;
+}
 
 function load() {
   try {
-    const raw = fs.readFileSync(STATE_PATH, 'utf8');
-    const state = JSON.parse(raw);
-    if (!state.values || !state.updatedAt) {
-      throw new Error('invalid drive-state.json');
-    }
-    return state;
-  } catch (e) {
+    return normalizeState(JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')));
+  } catch {
     return null;
   }
 }
 
-function save(state) {
-  state.updatedAt = new Date().toISOString();
+function save(state, now = new Date()) {
+  ensureParent(STATE_PATH);
+  state.updatedAt = now.toISOString();
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf8');
+  return state;
 }
 
-/**
- * Apply time-based decay: each drive regresses toward its baseline.
- * decay = e^(-t * ln(2) / half_life)
- */
-function decay(state) {
-  const now = new Date();
-  const elapsedSec = (now - new Date(state.updatedAt)) / 1000;
-  if (elapsedSec <= 1) return; // no decay needed for sub-second gaps
+function appendEvent(event) {
+  try {
+    ensureParent(EVENT_PATH);
+    fs.appendFileSync(EVENT_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, 'utf8');
+  } catch {}
+}
 
-  for (const [key, half] of Object.entries(HALF_LIVES)) {
+function decay(state, now = new Date()) {
+  const elapsedSec = Math.max(0, (now - new Date(state.updatedAt)) / 1000);
+  if (elapsedSec <= 1) return state;
+
+  for (const [key, definition] of Object.entries(DRIVE_DEFINITIONS)) {
+    if (!definition.halfLifeSec) continue;
     const dim = state.values[key];
-    if (!dim) continue;
-    const lambda = Math.LN2 / half;
-    const factor = Math.exp(-elapsedSec * lambda);
+    const factor = Math.exp(-elapsedSec * Math.LN2 / definition.halfLifeSec);
     dim.v = dim.baseline + (dim.v - dim.baseline) * factor;
   }
+  return state;
 }
 
-/**
- * Push a drive value up or down. amount can be negative (e.g. stress relief).
- */
+function tick(options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const state = normalizeState(load() || createState(now), now);
+  decay(state, now);
+  save(state, now);
+  return state;
+}
+
 function push(state, key, amount) {
+  if (!state.values[key]) throw new Error(`unknown drive: ${key}`);
+  const delta = clamp(amount, -0.25, 0.25);
+  state.values[key].v = clamp(state.values[key].v + delta);
+  return state.values[key].v;
+}
+
+function approach(state, key, target, rate) {
   const dim = state.values[key];
-  if (!dim) return;
-  dim.v = Math.max(0, Math.min(1, dim.v + amount));
+  if (!dim) throw new Error(`unknown drive: ${key}`);
+  dim.v = clamp(dim.v + (clamp(target) - dim.v) * clamp(rate));
+  return dim.v;
 }
 
-/**
- * Apply a touch event to the drive state.
- */
-function applyTouch(state, touchType) {
-  const mapping = TOUCH_PUSH[touchType] || TOUCH_PUSH['default'];
-  for (const [key, amount] of Object.entries(mapping)) {
-    push(state, key, amount);
+function reflect(changes = {}, reason = '') {
+  const explanation = String(reason || '').trim();
+  if (!explanation) throw new Error('drive reflection reason is required');
+
+  const state = tick();
+  const applied = {};
+  for (const [key, amount] of Object.entries(changes || {})) {
+    if (!DRIVE_DEFINITIONS[key]) throw new Error(`unknown drive: ${key}`);
+    const delta = clamp(amount, -0.20, 0.20);
+    if (!delta) continue;
+    const before = state.values[key].v;
+    const after = push(state, key, delta);
+    applied[key] = { before, delta, after };
   }
+  if (!Object.keys(applied).length) throw new Error('at least one non-zero drive change is required');
+
+  save(state);
+  appendEvent({ type: 'reflection', reason: explanation, changes: applied });
+  return { state, applied, reason: explanation };
 }
 
-/**
- * Compute face targets from current drive values.
- * Only computes non-zero values — caller merges with existing faceTargets.
- */
+function onWork(toolName, active = true) {
+  const state = tick();
+  const tool = String(toolName || 'default');
+
+  if (active) {
+    approach(state, 'duty', 0.58, 0.12);
+    if (/Read|Grep|Glob|WebSearch|WebFetch/i.test(tool)) {
+      approach(state, 'curiosity', 0.46, 0.08);
+    }
+    if (/Edit|Write|Bash|Task/i.test(tool)) {
+      push(state, 'fatigue', 0.004);
+    }
+  } else {
+    approach(state, 'duty', state.values.duty.baseline, 0.10);
+  }
+
+  save(state);
+  appendEvent({ type: 'work-evidence', tool, active: Boolean(active) });
+  return { state, ...computeFace(state) };
+}
+
+function onTouch(touchType) {
+  const state = tick();
+  const type = String(touchType || 'default');
+
+  // Touch is perception, not an automatic relationship judgement.
+  if (type === 'shake') {
+    approach(state, 'stress', 0.72, 0.25);
+  }
+
+  save(state);
+  appendEvent({ type: 'touch-evidence', touchType: type });
+  return { state, ...computeFace(state) };
+}
+
 function computeFace(state) {
   const face = {};
   const detailFace = {};
+  const faceKeys = new Set(['eyeSmile', 'browY', 'browAngle', 'browForm', 'cheek']);
 
   for (const [driveKey, weights] of Object.entries(FACE_WEIGHTS)) {
     const dim = state.values[driveKey];
     if (!dim) continue;
-    // Normalize: how far above/below baseline
     const delta = dim.v - dim.baseline;
-    if (Math.abs(delta) < 0.02) continue; // negligible
+    if (Math.abs(delta) < 0.02) continue;
 
     for (const [param, weight] of Object.entries(weights)) {
-      const value = delta * weight;
-      // Classify param into face or detailFace based on known keys
-      if (['eyeSmile','browY','browAngle','browForm','cheek','mouthForm'].includes(param)) {
-        face[param] = Math.max(-1, Math.min(1, (face[param] || 0) + value));
-      } else if (['browPress','buttonBrows','shadowFace','paleFace','blush','smileMouth','awkwardMouth','embarrassedEyes'].includes(param)) {
-        detailFace[param] = Math.max(0, Math.min(1, (detailFace[param] || 0) + value));
-      }
+      const target = faceKeys.has(param) ? face : detailFace;
+      const min = param === 'browY' || param === 'browAngle' ? -1 : 0;
+      target[param] = clamp((target[param] || 0) + delta * weight, min, 1);
     }
   }
-
   return { face, detailFace };
 }
 
-/**
- * Main entry point: load, decay, return current state.
- * Used by any process that needs the current drive state.
- */
-function tick() {
-  let state = load();
-  if (!state) {
-    state = {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      values: {
-        attachment: { v: 0.35, baseline: 0.30 },
-        curiosity:  { v: 0.25, baseline: 0.20 },
-        reflection: { v: 0.15, baseline: 0.10 },
-        duty:       { v: 0.25, baseline: 0.20 },
-        social:     { v: 0.35, baseline: 0.30 },
-        fatigue:    { v: 0.05, baseline: 0.00 },
-        libido:     { v: 0.12, baseline: 0.10 },
-        stress:     { v: 0.10, baseline: 0.10 },
-      },
+function brief(state = tick()) {
+  const output = {};
+  for (const [key, dim] of Object.entries(state.values)) {
+    output[key] = {
+      v: Number(dim.v.toFixed(3)),
+      b: dim.baseline,
+      kind: DRIVE_DEFINITIONS[key].kind,
+      meaning: DRIVE_DEFINITIONS[key].meaning
     };
-    save(state);
-    return state;
   }
-
-  decay(state);
-
-  // Natural internal dynamics — no randomness, only time and context
-  const secSinceUpdate = Math.max(0, (Date.now() - new Date(state.updatedAt)) / 1000);
-
-  // Fatigue: grows with time awake (~0.01 per 10 min)
-  state.values.fatigue.v = Math.min(0.8, state.values.fatigue.v + secSinceUpdate * 0.00015);
-
-  save(state);
-  return state;
-}
-
-/**
- * Touch event handler: apply push, save, return updated face.
- */
-function onTouch(touchType) {
-  const state = tick();
-  applyTouch(state, touchType);
-  save(state);
-  const { face, detailFace } = computeFace(state);
-  console.log(`[drive] touch=${touchType} attachment=${state.values.attachment.v.toFixed(2)} stress=${state.values.stress.v.toFixed(2)}`);
-  return { state, face, detailFace };
-}
-
-/**
- * Work event handler: push duty/curiosity, save, return updated face.
- */
-function onWork(toolName) {
-  const state = tick();
-  const tool = toolName || 'default';
-  // Writing tools push duty, reading tools push curiosity
-  if (/Edit|Write|Bash/i.test(tool)) {
-    push(state, 'duty', 0.05);
-  }
-  if (/Read|Grep|WebSearch|WebFetch/i.test(tool)) {
-    push(state, 'curiosity', 0.04);
-  }
-  save(state);
-  const { face, detailFace } = computeFace(state);
-  return { state, face, detailFace };
-}
-
-/**
- * Idle tick: grows fatigue very slowly, decay only.
- */
-function onIdle() {
-  const state = tick();
-  // fatigue grows ~0.01 per minute when awake
-  state.values.fatigue.v = Math.min(0.8, state.values.fatigue.v + 0.01);
-  save(state);
-  return { state };
+  return output;
 }
 
 module.exports = {
-  tick,
-  onTouch,
-  onWork,
-  onIdle,
-  computeFace,
+  STATE_PATH,
+  EVENT_PATH,
+  DRIVE_DEFINITIONS,
+  FACE_WEIGHTS,
+  createState,
+  normalizeState,
   load,
   save,
+  decay,
+  tick,
   push,
-  TOUCH_PUSH,
-  STATE_PATH,
+  approach,
+  reflect,
+  onWork,
+  onTouch,
+  computeFace,
+  brief
 };
