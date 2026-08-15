@@ -8,6 +8,7 @@ require('dotenv').config({ quiet: true });
 
 const http = require('http');
 const { createMemoryStore } = require('../services/memory-engine');
+const driveEngine = require('../services/drive-engine');
 
 const port = Number(process.env.PET_CONTROL_PORT || 3470);
 const memoryStore = createMemoryStore({
@@ -205,6 +206,31 @@ const tools = [
       properties: { text: { type: 'string' } },
       required: ['text']
     }
+  },
+  {
+    name: 'drive_read',
+    description: 'Read Leo current eight-dimensional internal state and the meaning of each value.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'drive_reflect',
+    description: 'Apply small, deliberate subjective drive adjustments after genuine reflection. Every change needs a reason; facts and touch must not mechanically dictate feelings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        attachment: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        curiosity: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        reflection: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        duty: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        social: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        fatigue: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        libido: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        stress: { type: 'number', minimum: -0.2, maximum: 0.2 },
+        reason: { type: 'string' }
+      },
+      required: ['reason'],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -271,6 +297,21 @@ function handleToolCall(name, args) {
 
   if (name === 'memory_identity') {
     return memoryStore.identity(args.text);
+  }
+
+  if (name === 'drive_read') {
+    const state = driveEngine.tick();
+    return { state: driveEngine.brief(state), updatedAt: state.updatedAt };
+  }
+
+  if (name === 'drive_reflect') {
+    const { reason, ...changes } = args;
+    const result = driveEngine.reflect(changes, reason);
+    return {
+      state: driveEngine.brief(result.state),
+      applied: result.applied,
+      reason: result.reason
+    };
   }
 
   throw new Error(`Unknown tool: ${name}`);

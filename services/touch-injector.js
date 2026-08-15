@@ -77,12 +77,10 @@ function startTouchInjector(options = {}) {
         const result = injectToTmux(message, options);
         console.log(`[touch-injector] ${message}`, result.ok ? '→ tmux' : '→ log only');
 
-        // Factual push: shake → stress (no judgement needed)
+        // Physical evidence only. Subjective meaning belongs to Leo.
         if (payload.type === 'shake') {
           try {
-            const s = driveEngine.tick();
-            driveEngine.push(s, 'stress', 0.06);
-            driveEngine.save(s);
+            driveEngine.onTouch('shake');
           } catch {}
         }
       });

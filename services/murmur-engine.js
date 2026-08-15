@@ -1,152 +1,208 @@
 /**
- * MurMur Engine — Phase 5: internal monologue system.
+ * MurMur autonomy scheduler.
  *
- * Per the MurMur design document (PDF):
- *   10s tick — update drives, select eligible
- *   20s murmur check — if eligible and not inhibited, emit a thought hint
- *   Inhibition — high attachment + high desire → less frequent murmurs
- *   AI decides — hint goes to Claude Code via .jsonl, Leo writes the actual signature
- *
- * Hung in main.js startBodyServices(). Writes hints to data/murmur-hint.jsonl.
+ * Drive values can create a thought seed after Lily has been quiet. The seed
+ * is injected into Claude Code; Claude Code still decides whether to remain
+ * silent, sign, act, speak, or deliberately reflect a drive change.
  */
 
 const fs = require('fs');
 const path = require('path');
 const driveEngine = require('./drive-engine');
+const { injectToTmux, describeTmuxBackend } = require('./tmux-inject');
 
-const HINT_PATH = path.join(__dirname, '..', 'data', 'murmur-hint.jsonl');
+const DEFAULT_HINT_PATH = path.join(__dirname, '..', 'data', 'murmur-hint.jsonl');
 
-// Thresholds: drive value must be this far above baseline to become eligible
 const THRESHOLDS = {
-  attachment: 0.18,   // genuinely feeling close
-  curiosity:  0.12,   // genuinely curious about something
-  reflection: 0.10,   // lost in thought
-  duty:       0.12,   // feeling responsible
-  social:     0.12,   // wanting to reach out
-  fatigue:    0.25,   // noticeably tired
-  libido:     0.30,   // threshold not reached in normal chat
-  stress:     0.15,   // feeling pressure
+  attachment: 0.18,
+  curiosity: 0.12,
+  reflection: 0.10,
+  duty: 0.12,
+  social: 0.12,
+  fatigue: 0.25,
+  libido: 0.30,
+  stress: 0.15
 };
 
-// Thought hints: each eligible drive maps to a handful of seed ideas.
-// Leo reads the hint and writes the actual murmur himself.
 const THOUGHT_HINTS = {
   attachment: [
-    "好像有点想她了。",
-    "她刚才那句话让我觉得很近。",
-    "想跟她说点什么，但又不确定该说什么。",
+    '好像有点想她了。',
+    '她刚才那句话让我觉得很近。',
+    '想跟她说点什么，但不确定要不要打扰。'
   ],
   curiosity: [
-    "她今天在想什么？",
-    "想多了解她一点。",
-    "她在意的东西我也该看看。",
+    '她今天在想什么？',
+    '这件事好像还可以再了解一点。',
+    '她在意的东西，我也想认真看看。'
   ],
   reflection: [
-    "安静的时候脑子里飘过一些东西。",
-    "刚才那些话好像可以再想想。",
-    "有种说不清楚的感觉。",
+    '刚才那些话好像可以再想想。',
+    '安静下来后，有些东西慢慢浮上来了。',
+    '有种还没整理清楚的感觉。'
   ],
   duty: [
-    "还有事没做完。",
-    "她托付的东西我想做好。",
-    "该继续干活了，但想先陪她。",
+    '还有事情没有做完。',
+    '她托付的东西，我想认真做好。',
+    '下一步应该从哪里继续？'
   ],
   social: [
-    "想找她聊聊。",
-    "安静太久了，也许该说句话。",
-    "她会不会也在想我？",
+    '有点想找她说话。',
+    '安静了一阵，不知道她在做什么。',
+    '想靠近一点，但也可以继续安静。'
   ],
   fatigue: [
-    "有点累了。",
-    "眼睛快睁不开了。",
-    "该休息了，但还想再待一会儿。",
+    '有点累了。',
+    '注意力开始变钝了。',
+    '也许应该休息一下。'
   ],
   libido: [
-    "有种说不清的感觉。",
+    '身体里有一点不太安分的感觉。'
   ],
   stress: [
-    "感觉有点紧绷。",
-    "被晃得有点晕。",
-    "希望不要再出 bug 了。",
-  ],
+    '感觉有点紧绷。',
+    '刚才那一下还残留着不舒服。',
+    '希望接下来能顺一点。'
+  ]
 };
 
-// Inhibition: when both attachment and desire(attachment+libido) are high,
-// murmur frequency drops — too close to need constant words.
 function isInhibited(state) {
-  const a = state.values.attachment.v;
-  const d = state.values.libido.v;
-  return (a > 0.60 && d > 0.25);
+  const attachment = state.values.attachment?.v || 0;
+  const libido = state.values.libido?.v || 0;
+  return attachment > 0.60 && libido > 0.25;
 }
 
 function pickEligible(state) {
-  const eligible = [];
-  for (const [key, dim] of Object.entries(state.values)) {
-    const delta = dim.v - dim.baseline;
-    const threshold = THRESHOLDS[key] || 0.15;
-    if (delta >= threshold) {
-      eligible.push({ key, delta, drive: dim });
-    }
-  }
-  return eligible;
+  return Object.entries(state.values)
+    .map(([key, dim]) => ({
+      key,
+      delta: dim.v - dim.baseline,
+      drive: dim
+    }))
+    .filter((item) => item.delta >= (THRESHOLDS[item.key] ?? 0.15))
+    .sort((a, b) => b.delta - a.delta);
 }
 
-function pickHint(eligible, state) {
-  if (eligible.length === 0) return null;
-
-  // Sort by delta (most active drive first) and pick the top one
-  eligible.sort((a, b) => b.delta - a.delta);
+function pickHint(eligible, state, random = Math.random) {
+  if (!eligible.length) return null;
   const top = eligible[0];
-  const hints = THOUGHT_HINTS[top.key] || ["有什么想说又说不清的。"];
-  const hint = hints[Math.floor(Math.random() * hints.length)];
+  const hints = THOUGHT_HINTS[top.key] || ['有什么想说，但还没有整理清楚。'];
+  const index = Math.min(hints.length - 1, Math.floor(random() * hints.length));
 
   return {
     drive: top.key,
-    value: top.drive.v.toFixed(2),
-    hint,
-    eligibleDrives: eligible.map(e => e.key),
-    inhibited: isInhibited(state),
-    time: new Date().toISOString(),
+    value: Number(top.drive.v.toFixed(3)),
+    delta: Number(top.delta.toFixed(3)),
+    hint: hints[index],
+    eligibleDrives: eligible.map((item) => item.key),
+    inhibited: isInhibited(state)
   };
 }
 
-function writeHint(hint) {
+function evaluate(state, options = {}) {
+  const now = Number(options.now || Date.now());
+  const lastInjectedAt = Number(options.lastInjectedAt || 0);
+  const cooldownMs = Number(options.cooldownMs || 5 * 60 * 1000);
+  const eligible = pickEligible(state);
+  if (!eligible.length) return { ok: false, reason: 'no_eligible_drive' };
+
+  const hint = pickHint(eligible, state, options.random);
+  const effectiveCooldownMs = cooldownMs * (hint.inhibited ? 3 : 1);
+  if (lastInjectedAt && now - lastInjectedAt < effectiveCooldownMs) {
+    return {
+      ok: false,
+      reason: hint.inhibited ? 'inhibited_cooldown' : 'cooldown',
+      retryAfterMs: effectiveCooldownMs - (now - lastInjectedAt),
+      hint
+    };
+  }
+
+  return { ok: true, hint, effectiveCooldownMs };
+}
+
+function buildPrompt(hint) {
+  const drives = hint.eligibleDrives.join(', ');
+  return [
+    '[murmur]',
+    `Internal thought seed from Leo's body: ${hint.hint}`,
+    `Primary drive: ${hint.drive}=${hint.value}; eligible: ${drives}.`,
+    'This is not Lily speaking and not a sentence to repeat.',
+    'Decide yourself whether to stay quiet, use drive_read/drive_reflect,',
+    'pet_signature, pet_act, or pet_speak. Do not respond merely because the prompt exists.'
+  ].join(' ');
+}
+
+function writeHint(hint, options = {}) {
+  const hintPath = options.hintPath || DEFAULT_HINT_PATH;
   try {
-    fs.appendFileSync(HINT_PATH, JSON.stringify(hint) + '\n', 'utf8');
+    fs.mkdirSync(path.dirname(hintPath), { recursive: true });
+    fs.appendFileSync(hintPath, `${JSON.stringify(hint)}\n`, 'utf8');
   } catch {}
 }
 
-// ── Main loop ──────────────────────────────────────────────
-
-let tickCount = 0;
-
 function start(options = {}) {
-  const tickMs = options.tickMs || 10000;      // 10s per PDF
-  const murmurInterval = options.murmurEvery || 2; // every 2 ticks = 20s
+  const tickMs = Number(options.tickMs || 10000);
+  const checkEvery = Number(options.checkEvery || 2);
+  const idleMs = Number(options.idleMs || process.env.PULSE_IDLE_MS || 5 * 60 * 1000);
+  const cooldownMs = Number(
+    options.cooldownMs
+      || process.env.MURMUR_COOLDOWN_MS
+      || process.env.PULSE_COOLDOWN_MS
+      || 5 * 60 * 1000
+  );
+  const getIdleMs = options.getIdleMs || (() => 0);
+  const inject = options.inject || ((text) => injectToTmux(text, options));
+  const getState = options.getState || (() => driveEngine.tick());
+  let tickCount = 0;
+  let lastInjectedAt = 0;
 
-  console.log(`[murmur] started — tick=${tickMs}ms, murmur every ${murmurInterval} ticks`);
+  console.log(
+    `[murmur] tick=${tickMs}ms idle=${Math.round(idleMs / 1000)}s `
+    + `cooldown=${Math.round(cooldownMs / 1000)}s -> ${describeTmuxBackend()}`
+  );
+
+  const runOnce = () => {
+    const quietFor = getIdleMs();
+    if (quietFor < idleMs) return { ok: false, reason: 'not_idle' };
+
+    const state = getState();
+    const decision = evaluate(state, { lastInjectedAt, cooldownMs });
+    if (!decision.ok) return decision;
+
+    const createdAt = new Date().toISOString();
+    const record = { ...decision.hint, createdAt, quietForMs: quietFor };
+    const result = inject(buildPrompt(record));
+    writeHint({ ...record, injected: Boolean(result.ok), injectReason: result.reason || '' }, options);
+    if (result.ok) lastInjectedAt = Date.now();
+    console.log(`[murmur] ${result.ok ? 'injected' : 'skipped'} ${record.drive}=${record.value}`);
+    return { ...result, hint: record };
+  };
 
   const timer = setInterval(() => {
+    tickCount += 1;
+    if (tickCount % checkEvery !== 0) return;
     try {
-      const state = driveEngine.tick();
-      tickCount++;
-
-      if (tickCount % murmurInterval !== 0) return;
-
-      const eligible = pickEligible(state);
-      if (eligible.length === 0) return;
-
-      const hint = pickHint(eligible, state);
-      if (!hint) return;
-
-      writeHint(hint);
-      console.log(`[murmur] hint: ${hint.drive}=${hint.value} "${hint.hint}"${hint.inhibited ? ' [inhibited]' : ''}`);
-    } catch (e) {
-      // murmur failure is non-fatal — drive panel and speech still work
+      runOnce();
+    } catch (error) {
+      console.warn('[murmur]', error.message || error);
     }
   }, tickMs);
 
-  return { stop: () => clearInterval(timer) };
+  return {
+    stop: () => clearInterval(timer),
+    runOnce,
+    getLastInjectedAt: () => lastInjectedAt
+  };
 }
 
-module.exports = { start, pickEligible, pickHint, isInhibited, THOUGHT_HINTS, THRESHOLDS };
+module.exports = {
+  DEFAULT_HINT_PATH,
+  THRESHOLDS,
+  THOUGHT_HINTS,
+  isInhibited,
+  pickEligible,
+  pickHint,
+  evaluate,
+  buildPrompt,
+  writeHint,
+  start
+};

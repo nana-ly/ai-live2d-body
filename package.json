@@ -8,7 +8,7 @@
     "start:all": "powershell -NoProfile -ExecutionPolicy Bypass -File start-all.ps1",
     "start:legacy": "powershell -NoProfile -Command \"$env:PET_BODY_ONLY='0'; electron .\"",
     "mcp:pet": "node mcp/pet-server.js",
-    "test": "node --test tests/memory-engine.test.js tests/pet-mcp.test.js",
+    "test": "node --test tests/memory-engine.test.js tests/drive-engine.test.js tests/murmur-engine.test.js tests/drive-panel.test.js tests/pet-mcp.test.js",
     "pulse": "node services/pulse-scheduler.js",
     "tts": "python services/tts-server.py",
     "brain:wsl": "powershell -NoProfile -ExecutionPolicy Bypass -File hooks/start-wsl-tmux.ps1"

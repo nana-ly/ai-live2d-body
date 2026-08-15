@@ -120,7 +120,11 @@ function startTranscriptWatcher(getWindow, options = {}) {
           text: extractText(entry)
         }))
         .filter((item) => item.text && (item.role === 'user' || item.role === 'assistant'))
-        .filter((item) => !item.text.startsWith('[pulse') && !item.text.startsWith('[pet-touch'));
+        .filter((item) => (
+          !item.text.startsWith('[pulse')
+          && !item.text.startsWith('[murmur]')
+          && !item.text.startsWith('[pet-touch')
+        ));
 
       const latest = candidates[candidates.length - 1];
       if (!latest || latest.id === lastSeenId) return;

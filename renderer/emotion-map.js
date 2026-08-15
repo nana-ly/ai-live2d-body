@@ -40,38 +40,9 @@
     shy:       { buttonBrows: 0.15, blush: 0.4, embarrassedEyes: 0.3 }
   };
 
-  const workPropByTool = {
-    Read: { actionParam: '', toggleParam: '' },
-    Edit: { actionParam: '', toggleParam: '' },
-    Write: { actionParam: '', toggleParam: '' },
-    Bash: { actionParam: '', toggleParam: '' },
-    Grep: { actionParam: '', toggleParam: '' },
-    Shell: { actionParam: '', toggleParam: '' },
-    default: { actionParam: '', toggleParam: '' }
-  };
-
-  const keywordEmotion = [
-    { re: /开心|高兴|哈哈|嘿嘿|amused|happy|lol/i, emotion: 'amused' },
-    { re: /难过|伤心|焦虑|害怕|崩溃|哭|sad|anxious|worried/i, emotion: 'concerned' },
-    { re: /爱你|喜欢|想你|抱抱|warm|love/i, emotion: 'warm' },
-    { re: /生气|愤怒|angry|mad/i, emotion: 'deadpan' },
-    { re: /害羞|embarrass/i, emotion: 'concerned' },
-    { re: /思考|想想|查|搜索|thinking|debug|code|bug/i, emotion: 'thinking' }
-  ];
-
-  function detectEmotionFromText(text) {
-    const sample = String(text || '');
-    for (const rule of keywordEmotion) {
-      if (rule.re.test(sample)) return rule.emotion;
-    }
-    return 'neutral';
-  }
-
   window.PetEmotionMap = {
     expressionByEmotion,
     faceByEmotion,
-    detailFaceByEmotion,
-    workPropByTool,
-    detectEmotionFromText
+    detailFaceByEmotion
   };
 })();
