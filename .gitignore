@@ -1,0 +1,25 @@
+# Secrets and machine-local configuration
+.env
+.codex/
+.claude/settings.local.json
+
+# Dependencies and generated output
+node_modules/
+output/
+services/__pycache__/
+*.py[cod]
+*.log
+
+# Private runtime state and conversation memory
+data/
+
+# Third-party binaries, licensed model assets, and reference documents
+deeplx_windows_amd64.exe
+TUGUN-001/
+Blaze Free/
+docs/references/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini

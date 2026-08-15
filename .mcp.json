@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "live2d-pet": {
+      "command": "node",
+      "args": ["D:\\QQdown\\ai-live2d-body\\mcp\\pet-server.js"],
+      "env": {
+        "PET_CONTROL_PORT": "39271"
+      }
+    }
+  }
+}

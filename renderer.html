@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AI Live2D Body</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent; cursor: grab; }
+    body.is-dragging { cursor: grabbing; }
+    .pet-ui, .context-menu, .resize-grip { cursor: default; }
+    canvas { display: block; }
+    .pet-ui {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 5;
+      display: grid;
+      gap: 7px;
+      font: clamp(13px, 2.8vw, 16px)/1.45 system-ui, "Microsoft YaHei", sans-serif;
+      color: #f6f7fb;
+      pointer-events: none;
+    }
+    .bubble {
+      display: none;
+      position: relative;
+      min-height: 40px;
+      max-height: 120px;
+      padding: 10px 32px 10px 12px;
+      font-size: clamp(15px, 3.2vw, 18px);
+      line-height: 1.5;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 10px;
+      background: rgba(12, 14, 19, 0.82);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(12px);
+      word-break: break-word;
+      pointer-events: auto;
+    }
+    .bubble.is-visible { display: block; }
+    .bubble.is-user {
+      border-color: rgba(140, 180, 255, 0.28);
+      background: rgba(16, 22, 34, 0.72);
+    }
+    .bubble-label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: rgba(246, 247, 251, 0.55);
+    }
+    .bubble-text { display: block; }
+    .bubble.is-loading {
+      min-height: 36px;
+      width: fit-content;
+      min-width: 46px;
+      overflow: hidden;
+    }
+    .bubble.is-loading::before {
+      content: "";
+      display: block;
+      width: 7px;
+      height: 7px;
+      margin: 5px auto;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.75;
+      animation: dot-pulse 0.9s ease-in-out infinite;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { transform: scale(0.8); opacity: 0.35; }
+      50% { transform: scale(1.2); opacity: 0.95; }
+    }
+    .history-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: rgba(246, 247, 251, 0.4);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .history-btn:hover { color: #f6f7fb; background: rgba(255, 255, 255, 0.1); }
+    .history-btn.has-msgs { color: rgba(246, 247, 251, 0.7); }
+    .chat-log {
+      display: none;
+      max-height: 160px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 10px;
+      background: rgba(12, 14, 19, 0.85);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+      scroll-behavior: smooth;
+      margin-bottom: 4px;
+    }
+    .chat-log.is-open { display: block; }
+    .chat-msg {
+      padding: 6px 12px;
+      font-size: clamp(12px, 2.6vw, 15px);
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .chat-msg + .chat-msg { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+    .chat-msg-label {
+      display: inline;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      color: rgba(246, 247, 251, 0.45);
+      margin-right: 6px;
+    }
+    .chat-msg.is-user .chat-msg-label { color: rgba(140, 180, 255, 0.55); }
+    .chat-msg-text { color: rgba(246, 247, 251, 0.85); }
+    .chat-msg-time {
+      font-size: 9px;
+      color: rgba(246, 247, 251, 0.25);
+      margin-left: 6px;
+    }
+    .signature {
+      display: none;
+      max-width: 100%;
+      padding: 5px 10px 6px;
+      background: rgba(246, 248, 252, 0.93);
+      color: #1a1c22;
+      border: 1.5px solid rgba(50, 54, 68, 0.5);
+      border-radius: 14px;
+      font-size: 11px;
+      line-height: 1.35;
+      pointer-events: auto;
+      word-break: break-word;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+    .signature.is-visible { display: block; }
+    .signature-text { display: block; }
+    .chat {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(20, 22, 28, 0.56);
+      backdrop-filter: blur(10px);
+      pointer-events: auto;
+      visibility: hidden;
+    }
+    .chat.is-ready { visibility: visible; }
+    .chat.is-hidden { display: none; }
+    .chat-toggle {
+      display: block;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      background: rgba(20, 22, 28, 0.56);
+      color: rgba(246, 247, 251, 0.55);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+      justify-self: end;
+    }
+    .chat-toggle:hover { color: #f6f7fb; background: rgba(255, 255, 255, 0.12); }
+    .chat-toggle.is-hidden { display: none; }
+    .chat-form-row { display: flex; gap: 6px; align-items: center; }
+    button, input {
+      height: clamp(26px, 6vw, 30px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.12);
+      color: inherit;
+      font: inherit;
+    }
+    button { min-width: 34px; padding: 0 8px; cursor: pointer; }
+    button:hover { background: rgba(255, 255, 255, 0.2); }
+    button:disabled { cursor: not-allowed; opacity: 0.38; }
+    input { min-width: 0; flex: 1; padding: 0 10px; outline: none; }
+    .resize-grip {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      width: 18px;
+      height: 18px;
+      cursor: nwse-resize;
+      pointer-events: auto;
+    }
+    .resize-grip::after {
+      content: "";
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      width: 9px;
+      height: 9px;
+      border-right: 2px solid rgba(255, 255, 255, 0.6);
+      border-bottom: 2px solid rgba(255, 255, 255, 0.6);
+    }
+    .context-menu {
+      position: fixed;
+      z-index: 10;
+      display: none;
+      width: 132px;
+      max-height: min(310px, calc(100vh - 20px));
+      overflow-y: auto;
+      padding: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(20, 22, 28, 0.9);
+      color: #f6f7fb;
+      font: 12px/1.35 system-ui, "Microsoft YaHei", sans-serif;
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+    }
+    .context-menu.is-open { display: grid; gap: 4px; }
+    .menu-title { padding: 4px 7px 1px; color: rgba(246, 247, 251, 0.62); font-size: 11px; }
+    .context-menu button { width: 100%; text-align: left; background: transparent; border-color: transparent; }
+    .context-menu button.is-active { background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.24); }
+    .drive-panel {
+      position: fixed;
+      left: 8px;
+      top: 8px;
+      z-index: 10;
+      padding: 7px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 7px;
+      background: rgba(14, 16, 22, 0.78);
+      backdrop-filter: blur(8px);
+      font-size: 10px;
+      line-height: 1.35;
+      color: rgba(246, 247, 251, 0.5);
+      pointer-events: auto;
+      min-width: 130px;
+    }
+    .drive-panel .dp-title { font-size: 8px; color: rgba(246, 247, 251, 0.25); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .drive-row { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+    .drive-label { width: 44px; text-align: right; overflow: hidden; white-space: nowrap; font-size: 9px; }
+    .drive-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; }
+    .drive-bar-fill { display: inline-block; height: 100%; border-radius: 2px; transition: width 0.6s ease; min-width: 2px; vertical-align: top; }
+    .drive-val { width: 24px; text-align: right; font-size: 8px; color: rgba(246, 247, 251, 0.4); }
+  </style>
+</head>
+<body>
+  <div id="drivePanel" class="drive-panel">
+    <div class="dp-title">drives</div>
+  </div>
+  <div class="pet-ui">
+    <div id="signature" class="signature">
+      <span class="signature-text"></span>
+    </div>
+    <div id="historyPanel" class="chat-log"></div>
+    <div id="bubble" class="bubble">
+      <span class="bubble-label">Leo</span>
+      <button id="historyBtn" class="history-btn" title="聊天记录">⋯</button>
+      <span class="bubble-text"></span>
+    </div>
+    <form id="chatForm" class="chat">
+      <input id="chatInput" autocomplete="off" placeholder="Chat..." />
+      <button type="submit">发送</button>
+    </form>
+    <button id="chatToggle" class="chat-toggle" title="显示输入框">+</button>
+  </div>
+
+  <div id="contextMenu" class="context-menu">
+    <div class="menu-title">表情</div>
+    <button type="button" data-reset-all="true">默认</button>
+    <button type="button" data-expression="1">害羞</button>
+    <button type="button" data-expression="4">尴尬</button>
+    <button type="button" data-expression="7">嫌弃</button>
+    <button type="button" data-expression="9">惊恐</button>
+    <button type="button" data-expression="0">血迹</button>
+    <div class="menu-title">装扮</div>
+    <button type="button" data-toggle-group="ears" data-on="Param19" data-off="Param24">红狗耳</button>
+    <button type="button" data-toggle-group="ears" data-on="Param19">黑狗耳</button>
+    <button type="button" data-toggle-param="Param6">眼镜</button>
+    <button type="button" data-toggle-group="hair" data-on="Param2" data-off="Param14">发型 1</button>
+    <button type="button" data-toggle-group="hair" data-on="Param14" data-off="Param2">发型 2</button>
+    <div class="menu-title">动作</div>
+    <button type="button" data-action-param="Param44">狗狗姿势</button>
+    <button type="button" data-action-param="Param45,Param46">唱歌</button>
+    <button type="button" data-motion="special">特殊动作</button>
+  </div>
+
+  <div class="resize-grip" title="拖动调整窗口大小"></div>
+  <script src="./node_modules/@hazart-pkg/live2d-core/live2dcubismcore.min.js"></script>
+  <script src="./node_modules/pixi.js/dist/pixi.min.js"></script>
+  <script src="./node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
+  <script src="renderer/spring.js"></script>
+  <script src="renderer/blink.js"></script>
+  <script src="renderer/idle.js"></script>
+  <script src="renderer/choreographer.js"></script>
+  <script src="renderer/emotion-map.js"></script>
+  <script src="renderer/pipeline.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

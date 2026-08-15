@@ -1,0 +1,10 @@
+# 本机覆盖项示例 — 复制为 `.claude/settings.local.json`（不会进 git）
+
+{
+  "env": {
+    "PET_CONTROL_PORT": "39271",
+    "CLAUDE_TRANSCRIPT_DIR": "C:\\Users\\ASUS\\.claude\\projects\\D--QQdown-ai-live2d-body",
+    "TMUX_SESSION": "claude",
+    "TMUX_TARGET": "0"
+  }
+}

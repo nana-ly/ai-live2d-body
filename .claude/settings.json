@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\QQdown\\ai-live2d-body\\hooks\\post-tool.ps1\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\QQdown\\ai-live2d-body\\hooks\\stop.ps1\""
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "PET_CONTROL_PORT": "39271",
+    "CLAUDE_TRANSCRIPT_DIR": "C:\\Users\\ASUS\\.claude\\projects\\D--QQdown-ai-live2d-body"
+  }
+}
